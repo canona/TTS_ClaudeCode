@@ -1,0 +1,86 @@
+# Coolify (Build Pack: Docker Compose) – app + VieNeu-TTS in their own containers.
+# No `ports:` on purpose: Coolify's Traefik routes the domain set on the `tts` service
+# (e.g. http://tts.example.com:3102 behind a Cloudflare Tunnel). `vieneu` stays internal.
+# Local test: docker compose -f docker-compose.coolify.yml up -d --build
+
+services:
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3102"
+    environment:
+      PORT: 3102
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      TTS_MAX_TEXT_LENGTH: ${TTS_MAX_TEXT_LENGTH:-2000000}
+      TTS_MAX_CHUNK_BYTES: ${TTS_MAX_CHUNK_BYTES:-3000}
+      TTS_FIRST_CHUNK_BYTES: ${TTS_FIRST_CHUNK_BYTES:-200}
+      CACHE_MEMORY_MB: ${CACHE_MEMORY_MB:-128}
+      CACHE_DISK_MAX_MB: ${CACHE_DISK_MAX_MB:-2048}
+      CACHE_DIR: /app/.tts-cache
+      VOICES_DIR: /app/.voices
+      # Partner API (/api/v1): clients + usage records, and the internal UI's password
+      CLIENTS_FILE: /app/.clients/clients.json
+      USAGE_DIR: /app/.usage
+      V1_MAX_CONCURRENT: ${V1_MAX_CONCURRENT:-2}
+      # Public site: set user:password in Coolify's Environment Variables
+      INTERNAL_BASIC_AUTH: ${INTERNAL_BASIC_AUTH:-}
+      # VieNeu-TTS runs in the `vieneu` service below; never launched by the app here
+      VIENEU_URL: http://vieneu:8000
+      VIENEU_AUTOSTART: "0"
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+      VIENEU_CONCURRENCY: ${VIENEU_CONCURRENCY:-2}
+      # /app is not writable by the runtime user; logs go to stdout (Coolify → Logs)
+      VIENEU_LOG_FILE: ""
+    # Not gated on `service_healthy`: Edge TTS works while VieNeu is still loading its model.
+    depends_on:
+      - vieneu
+    volumes:
+      - tts-cache:/app/.tts-cache
+      - tts-voices:/app/.voices
+      - tts-clients:/app/.clients
+      - tts-usage:/app/.usage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3102/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  vieneu:
+    # Upstream CPU image (ONNX, torch-free), pinned to the commit tested with this app.
+    build:
+      context: https://github.com/pnnbao97/VieNeu-TTS.git#2e982ff857bbe23fffa0c314e0f60da2497e2f4b
+      dockerfile: docker/Dockerfile.cpu
+    restart: unless-stopped
+    # The image defaults to the Gradio UI; run the OpenAI-compatible streaming API instead.
+    command: ["python", "-m", "apps.openai_speech"]
+    expose:
+      - "8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      VIENEU_BACKEND: onnx
+      # int8 is faster on CPUs with VNNI
+      VIENEU_PRECISION: ${VIENEU_PRECISION:-fp32}
+      # Empty = VieNeu's CPU default (fp32: 1, int8: 2)
+      VIENEU_MAX_STREAMS: ${VIENEU_MAX_STREAMS:-}
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+    volumes:
+      # Model weights downloaded from Hugging Face on first start
+      - vieneu-hf-cache:/home/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 300s
+      retries: 3
+
+volumes:
+  tts-cache:
+  tts-voices:
+  tts-clients:
+  tts-usage:
+  vieneu-hf-cache:

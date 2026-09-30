@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+.env
+.env.local
+.tts-cache/
+npm-debug.log*
+.DS_Store
+.voices/
+.clients/
+.usage/
+.vieneu.log*
+*.tmp.mjs
+*.log

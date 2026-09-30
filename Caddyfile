@@ -1,0 +1,27 @@
+# Reverse proxy in front of the app: automatic HTTPS (Let's Encrypt) for the partner API.
+# Replace the domain, point its DNS A record to this server, open ports 80 + 443, then:
+#   caddy run --config Caddyfile        (or install Caddy as a service)
+# Set INTERNAL_BASIC_AUTH in the app's environment to password-protect the web UI.
+
+tts.example.com {
+	# No `encode` (gzip) on purpose: compressing the audio / NDJSON streams would buffer them.
+
+	request_body {
+		# Largest request: a 5 MB voice recording upload.
+		max_size 8MB
+	}
+
+	reverse_proxy 127.0.0.1:3102 {
+		# Forward every audio frame as soon as it is produced.
+		flush_interval -1
+		# Long texts stream for many minutes.
+		transport http {
+			read_timeout 15m
+			write_timeout 15m
+		}
+	}
+
+	log {
+		output file /var/log/caddy/tts-access.log
+	}
+}

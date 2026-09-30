@@ -1,0 +1,48 @@
+services:
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: edge-tts-studio:latest
+    container_name: edge-tts-studio
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3102}:3102"
+    environment:
+      PORT: 3102
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      TTS_MAX_TEXT_LENGTH: ${TTS_MAX_TEXT_LENGTH:-2000000}
+      TTS_MAX_CHUNK_BYTES: ${TTS_MAX_CHUNK_BYTES:-3000}
+      TTS_FIRST_CHUNK_BYTES: ${TTS_FIRST_CHUNK_BYTES:-200}
+      CACHE_MEMORY_MB: ${CACHE_MEMORY_MB:-128}
+      CACHE_DISK_MAX_MB: ${CACHE_DISK_MAX_MB:-2048}
+      CACHE_DIR: /app/.tts-cache
+      VOICES_DIR: /app/.voices
+      # Partner API (/api/v1): clients + usage records, and the internal UI's password
+      CLIENTS_FILE: /app/.clients/clients.json
+      USAGE_DIR: /app/.usage
+      V1_MAX_CONCURRENT: ${V1_MAX_CONCURRENT:-2}
+      INTERNAL_BASIC_AUTH: ${INTERNAL_BASIC_AUTH:-}
+      # VieNeu-TTS running on the host machine (optional)
+      VIENEU_URL: ${VIENEU_URL:-http://host.docker.internal:8000}
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+      VIENEU_CONCURRENCY: ${VIENEU_CONCURRENCY:-4}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - tts-cache:/app/.tts-cache
+      - tts-voices:/app/.voices
+      - tts-clients:/app/.clients
+      - tts-usage:/app/.usage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3102/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  tts-cache:
+  tts-voices:
+  tts-clients:
+  tts-usage:
