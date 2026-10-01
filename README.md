@@ -172,7 +172,7 @@ Mọi biến môi trường đều tùy chọn, mô tả chi tiết trong [.env.
 | Edge | `TTS_CONCURRENCY`, `TTS_MAX_CHUNK_BYTES`, `TTS_FIRST_CHUNK_BYTES`, `TTS_CHUNK_TIMEOUT_MS`, `TTS_MAX_RETRIES`, `EDGE_CHROMIUM_VERSION` |
 | VieNeu | `VIENEU_URL`, `VIENEU_AUTOSTART`, `VIENEU_DIR`, `VIENEU_UV`, `VIENEU_API_KEY`, `VIENEU_MODEL`, `VIENEU_CONCURRENCY`, `VIENEU_MAX_CHUNK_BYTES`, `VIENEU_FIRST_BYTE_TIMEOUT_MS`, `VIENEU_TIMEOUT_MS`, `VIENEU_LOG_FILE`, `VIENEU_PRECISION` (truyền cho VieNeu) |
 | Giọng địa phương | `VOICES_DIR`, `VIENEU_CLEAN_SCRIPT` |
-| API đối tác | `CLIENTS_FILE`, `USAGE_DIR`, `V1_MAX_CONCURRENT`, `INTERNAL_BASIC_AUTH` |
+| API đối tác | `CLIENTS_FILE`, `USAGE_DIR`, `V1_MAX_CONCURRENT`, `INTERNAL_BASIC_AUTH`, `ADMIN_BASIC_AUTH` |
 
 ## API
 
@@ -199,7 +199,9 @@ Response `application/x-ndjson`, mỗi dòng là một sự kiện:
 
 ## Cung cấp API cho đối tác
 
-**Quản lý đối tác** bằng [scripts/clients.mjs](scripts/clients.mjs) (Docker: `docker compose exec tts node scripts/clients.mjs …`). App tự đọc lại khi file thay đổi, không cần khởi động lại:
+**Quản lý đối tác trên web:** đặt `ADMIN_BASIC_AUTH=admin:mật-khẩu-mạnh` (Coolify: Environment Variables, rồi Redeploy) và mở `https://<domain>/admin`. Tại đây có thể tạo key (key chỉ hiện một lần), cấp key mới, khóa/mở khóa, sửa hạn mức, xóa và xem số ký tự đã dùng trong tháng. Khi biến này để trống, `/admin` trả 404. Tài khoản admin tách riêng với `INTERNAL_BASIC_AUTH`.
+
+**Hoặc dùng dòng lệnh** [scripts/clients.mjs](scripts/clients.mjs) (Docker: `docker compose exec tts node scripts/clients.mjs …`). App tự đọc lại khi file thay đổi, không cần khởi động lại:
 
 ```bash
 node scripts/clients.mjs add "Công ty ABC" --cloning   # in API key MỘT lần duy nhất, gửi cho đối tác

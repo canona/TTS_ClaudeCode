@@ -23,6 +23,7 @@ services:
       USAGE_DIR: /app/.usage
       V1_MAX_CONCURRENT: ${V1_MAX_CONCURRENT:-2}
       INTERNAL_BASIC_AUTH: ${INTERNAL_BASIC_AUTH:-}
+      ADMIN_BASIC_AUTH: ${ADMIN_BASIC_AUTH:-}
       # VieNeu-TTS running on the host machine (optional)
       VIENEU_URL: ${VIENEU_URL:-http://host.docker.internal:8000}
       VIENEU_API_KEY: ${VIENEU_API_KEY:-}

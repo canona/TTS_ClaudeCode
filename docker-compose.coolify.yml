@@ -27,6 +27,8 @@ services:
       V1_MAX_CONCURRENT: ${V1_MAX_CONCURRENT:-2}
       # Public site: set user:password in Coolify's Environment Variables
       INTERNAL_BASIC_AUTH: ${INTERNAL_BASIC_AUTH:-}
+      # /admin page (create/rotate partner API keys): admin:strong-password. Empty = no /admin
+      ADMIN_BASIC_AUTH: ${ADMIN_BASIC_AUTH:-}
       # VieNeu-TTS runs in the `vieneu` service below; never launched by the app here
       VIENEU_URL: http://vieneu:8000
       VIENEU_AUTOSTART: "0"
