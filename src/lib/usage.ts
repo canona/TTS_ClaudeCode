@@ -39,11 +39,26 @@ function fileOf(month: string): string {
   return path.join(serverConfig.api.usageDir, `${month}.ndjson`);
 }
 
-/** Billed characters per client for `month`, rebuilt from the file on first use. */
-let totals: { month: string; chars: Map<string, number>; ready: Promise<void> } | null = null;
+interface MonthTotals {
+  month: string;
+  chars: Map<string, number>;
+  ready: Promise<void>;
+}
 
-function monthTotals(): NonNullable<typeof totals> {
+/**
+ * Billed characters per client for the current month, rebuilt from the file on
+ * first use. Pinned on globalThis: the /admin page and the /api/v1 route are
+ * separate bundles, each with its own copy of this module – module-level state
+ * would leave /admin with a total read once and never updated.
+ */
+const g = globalThis as typeof globalThis & {
+  __usageTotals?: MonthTotals;
+  __usageWriteChain?: Promise<unknown>;
+};
+
+function monthTotals(): MonthTotals {
   const month = monthOf();
+  const totals = g.__usageTotals;
   if (totals?.month === month) return totals;
   const chars = new Map<string, number>();
   const ready = (async () => {
@@ -63,8 +78,8 @@ function monthTotals(): NonNullable<typeof totals> {
       }
     }
   })();
-  totals = { month, chars, ready };
-  return totals;
+  g.__usageTotals = { month, chars, ready };
+  return g.__usageTotals;
 }
 
 /** Characters billed to `clientId` so far this month. */
@@ -74,13 +89,11 @@ export async function charsUsedThisMonth(clientId: string): Promise<number> {
   return t.chars.get(clientId) ?? 0;
 }
 
-let writeChain: Promise<unknown> = Promise.resolve();
-
 export function recordUsage(record: Omit<UsageRecord, 'ts'>): void {
   const now = Date.now();
   const t = monthTotals();
   const line = `${JSON.stringify({ ts: new Date(now).toISOString(), ...record })}\n`;
-  writeChain = writeChain
+  g.__usageWriteChain = (g.__usageWriteChain ?? Promise.resolve())
     .then(async () => {
       await t.ready; // count it after the file was read, never twice
       t.chars.set(record.clientId, (t.chars.get(record.clientId) ?? 0) + record.chars);
