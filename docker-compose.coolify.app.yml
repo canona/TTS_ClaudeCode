@@ -1,0 +1,64 @@
+# Coolify resource #2 of 2 (Build Pack: Docker Compose) – the Next.js app only.
+# VieNeu runs in its own resource (docker-compose.coolify.vieneu.yml), so a deploy
+# here builds just this image (~1-2 min) and leaves VieNeu and its model untouched.
+# No `ports:` on purpose: Coolify's Traefik routes the domain set on the `tts` service.
+# Keep the volume names: switching an existing resource to this file keeps its data.
+
+services:
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3102"
+    environment:
+      PORT: 3102
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      TTS_GLOBAL_CONCURRENCY: ${TTS_GLOBAL_CONCURRENCY:-4}
+      TTS_MAX_TEXT_LENGTH: ${TTS_MAX_TEXT_LENGTH:-2000000}
+      TTS_MAX_CHUNK_BYTES: ${TTS_MAX_CHUNK_BYTES:-3000}
+      TTS_FIRST_CHUNK_BYTES: ${TTS_FIRST_CHUNK_BYTES:-200}
+      CACHE_MEMORY_MB: ${CACHE_MEMORY_MB:-128}
+      CACHE_DISK_MAX_MB: ${CACHE_DISK_MAX_MB:-2048}
+      CACHE_DIR: /app/.tts-cache
+      VOICES_DIR: /app/.voices
+      # Partner API (/api/v1): clients + usage records, and the internal UI's password
+      CLIENTS_FILE: /app/.clients/clients.json
+      USAGE_DIR: /app/.usage
+      V1_MAX_CONCURRENT: ${V1_MAX_CONCURRENT:-2}
+      # Public site: set user:password in Coolify's Environment Variables
+      INTERNAL_BASIC_AUTH: ${INTERNAL_BASIC_AUTH:-}
+      # /admin page (create/rotate partner API keys): admin:strong-password. Empty = no /admin
+      ADMIN_BASIC_AUTH: ${ADMIN_BASIC_AUTH:-}
+      # VieNeu-TTS lives in the other resource (alias on the shared `coolify` network)
+      VIENEU_URL: ${VIENEU_URL:-http://tts-vieneu:8000}
+      VIENEU_AUTOSTART: "0"
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+      VIENEU_CONCURRENCY: ${VIENEU_CONCURRENCY:-2}
+      # /app is not writable by the runtime user; logs go to stdout (Coolify → Logs)
+      VIENEU_LOG_FILE: ""
+    volumes:
+      - tts-cache:/app/.tts-cache
+      - tts-voices:/app/.voices
+      - tts-clients:/app/.clients
+      - tts-usage:/app/.usage
+    networks:
+      - coolify
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3102/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  tts-cache:
+  tts-voices:
+  tts-clients:
+  tts-usage:
+
+networks:
+  # Coolify's destination network, shared with the VieNeu resource
+  coolify:
+    external: true

@@ -492,7 +492,7 @@ docker logs -f --tail 30 $C
 
 **Kết quả sau sửa:** VieNeu tải mô hình (khoảng 68,6 giây), nạp 25 giọng, `/health` trả 200 và container `(healthy)` (mục 9.5).
 
-> Lỗi sẽ lặp lại nếu dựng volume mới trên máy chủ khác. Cách bền vững hơn là sửa `docker-compose.coolify.yml` (thêm service khởi tạo chạy `chown`, hoặc chạy `vieneu` với `user: root`).
+> Lỗi sẽ lặp lại nếu dựng volume mới trên máy chủ khác khi dùng `docker-compose.coolify.yml`. File `docker-compose.coolify.vieneu.yml` (mục 11.6) đã có service `vieneu-init` tự `chown` volume nên không cần sửa tay.
 
 ### 10.8. PowerShell: gọi API bằng curl
 
@@ -592,6 +592,8 @@ Repo Public không tự có webhook. Trong Coolify tab **Webhooks** lấy URL, t
 2. Coolify → **Deploy** (hoặc webhook tự chạy).
 3. Dữ liệu trong các volume được giữ nguyên.
 
+> Deploy chậm vì mỗi lần đều build lại cả VieNeu: tách VieNeu thành resource riêng theo mục 11.6.
+
 ### 11.5. Sao lưu
 
 | Volume | Nội dung | Mức quan trọng |
@@ -601,6 +603,91 @@ Repo Public không tự có webhook. Trong Coolify tab **Webhooks** lấy URL, t
 | `tts-voices` | Giọng nhân bản | Cao |
 | `tts-cache` | Cache âm thanh | Thấp (tái tạo được) |
 | `vieneu-hf-cache` | Mô hình VieNeu | Thấp (tải lại được) |
+
+Sao lưu nhanh một volume ra file `.tar.gz` (chạy trong WSL, thay tên volume cho từng dòng cần sao lưu):
+
+```bash
+V=j26u9jryuouxl7aydzjnwx3c_tts-clients
+docker run --rm -v $V:/d -v "$PWD":/b alpine tar czf /b/$V-$(date +%F).tar.gz -C /d .
+```
+
+### 11.6. Tách VieNeu thành resource riêng để deploy nhanh
+
+**Vấn đề:** với `docker-compose.coolify.yml`, mỗi lần Deploy Coolify xử lý **cả hai** service: build lại `vieneu` từ repo GitHub bên ngoài (log có dòng `Dockerfile not found for service vieneu at https://github.com/pnnbao97/VieNeu-TTS.git#...`), rồi tạo lại container khiến VieNeu nạp lại mô hình (tới 5 phút không dùng được giọng VieNeu). Trong khi phần thay đổi thường xuyên chỉ là ứng dụng Next.js.
+
+**Giải pháp:** chia thành hai resource Coolify, dùng hai file compose có sẵn trong repo:
+
+| Resource | File compose | Khi nào deploy |
+|---|---|---|
+| VieNeu | `docker-compose.coolify.vieneu.yml` | Một lần; sau đó chỉ khi nâng phiên bản VieNeu |
+| Ứng dụng (resource hiện có) | `docker-compose.coolify.app.yml` | Mỗi lần sửa mã, chỉ build Next.js (~1-2 phút) |
+
+Hai resource nói chuyện qua network dùng chung `coolify` của Coolify: service `vieneu` có alias cố định `tts-vieneu`, ứng dụng gọi `http://tts-vieneu:8000` (biến `VIENEU_URL`, mặc định đã đúng). File VieNeu còn có service một lần `vieneu-init` tự `chown` volume mô hình, nên không còn gặp lỗi PermissionError ở mục 10.7.
+
+> **Vì sao giữ resource cũ làm resource ứng dụng:** Coolify đặt tên volume theo mã resource (`<mã>_tts-clients`). Giữ nguyên resource `j26u9jryuouxl7aydzjnwx3c` và chỉ đổi file compose thì các volume `tts-clients`, `tts-usage`, `tts-voices`, `tts-cache` được dùng lại nguyên vẹn. Nếu tạo resource ứng dụng mới, danh sách đối tác và API key sẽ **không** đi theo.
+
+#### Bước 0: Chuẩn bị
+
+1. Đảm bảo hai file `docker-compose.coolify.vieneu.yml`, `docker-compose.coolify.app.yml` đã được push lên GitHub.
+2. Sao lưu `tts-clients`, `tts-usage`, `tts-voices` theo lệnh ở mục 11.5.
+3. Kiểm tra network dùng chung tồn tại (mặc định có sẵn khi cài Coolify):
+
+   ```bash
+   docker network ls | grep coolify
+   ```
+
+#### Bước 1: Tạo resource VieNeu
+
+1. Coolify → Project → **+ New** → *Public Repository* → `https://github.com/canona/TTS_ClaudeCode`, branch `main`.
+2. **Build Pack:** `Docker Compose`; **Docker Compose Location:** `/docker-compose.coolify.vieneu.yml` → **Reload Compose File**.
+3. **Không** khai báo domain cho service nào (VieNeu chỉ dùng nội bộ).
+4. Environment Variables: `VIENEU_API_KEY` **bằng đúng** giá trị đang đặt ở resource ứng dụng (để trống nếu bên đó trống); tùy chọn `VIENEU_PRECISION`, `VIENEU_MAX_STREAMS`.
+5. **Deploy.** Lần đầu sẽ build image VieNeu và tải mô hình (~70 giây tải, cộng thời gian build). Từ đây không cần deploy lại resource này.
+6. Kiểm tra (chạy trong WSL):
+
+   ```bash
+   docker ps --format '{{.Names}}\t{{.Status}}' | grep vieneu
+   # container vieneu-<mã-resource-vieneu>-... phải (healthy); vieneu-init ở trạng thái Exited (0) là bình thường
+   docker network inspect coolify --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | grep vieneu
+   ```
+
+> Trong lúc này VieNeu cũ (thuộc resource ứng dụng) vẫn chạy song song, cần đủ RAM cho hai bản mô hình trong vài phút.
+
+#### Bước 2: Chuyển resource ứng dụng sang file compose mới
+
+1. Mở resource hiện có (`j26u9jryuouxl7aydzjnwx3c`) → **Configuration** → **Docker Compose Location:** đổi thành `/docker-compose.coolify.app.yml` → **Reload Compose File**.
+2. Kiểm tra lại **Domains**: service `tts` vẫn là `http://tts.vtcdigital.top:3102` (sau khi nạp lại compose, domain có thể bị xóa hoặc tự sinh `www.`; xem mục 10.4).
+3. **Environment Variables:** với **mọi** biến, bỏ chọn **Available at Buildtime** (tên khác tùy phiên bản: *Build Variable?*), chỉ giữ Runtime. Ứng dụng không cần biến nào lúc build; nếu để Buildtime, Coolify chèn toàn bộ biến thành `ARG` vào Dockerfile (log: `Added 42 ARG declarations ...`) và mỗi lần sửa một biến là mất cache `npm ci`/`npm run build`.
+4. **Advanced:** tắt **Disable Build Cache** và **Include Source Commit in Build** (nếu đang bật).
+5. **Deploy.** Log không còn dòng nào về `vieneu`; chỉ build service `tts`.
+
+#### Bước 3: Kiểm tra kết nối và dọn VieNeu cũ
+
+1. Ứng dụng gọi được VieNeu mới:
+
+   ```bash
+   docker exec tts-j26u9jryuouxl7aydzjnwx3c-<hậu-tố> wget -qO- http://tts-vieneu:8000/health
+   ```
+
+   Mở giao diện web, đọc thử một giọng Edge và một giọng VieNeu; banner vàng "VieNeu chưa sẵn sàng" không còn.
+2. Coolify có thể để lại container VieNeu cũ (không còn trong compose). Nếu `docker ps` vẫn thấy `vieneu-j26u9jryuouxl7aydzjnwx3c-...`, xóa nó và volume mô hình cũ:
+
+   ```bash
+   docker rm -f vieneu-j26u9jryuouxl7aydzjnwx3c-<hậu-tố>
+   docker volume rm j26u9jryuouxl7aydzjnwx3c_vieneu-hf-cache
+   ```
+
+   **Không** xóa các volume `j26u9jryuouxl7aydzjnwx3c_tts-*`.
+
+#### Quay lại cấu hình cũ
+
+Đổi **Docker Compose Location** của resource ứng dụng về `/docker-compose.coolify.yml` → Reload Compose File → Deploy, rồi Stop/xóa resource VieNeu. Volume dữ liệu ứng dụng không bị ảnh hưởng.
+
+#### Sau khi tách
+
+- Cập nhật ứng dụng: chỉ Deploy resource ứng dụng (mục 11.4). Sửa riêng thư mục `docs/` hoặc file compose không làm mất cache build vì đã có trong `.dockerignore`.
+- Nâng phiên bản VieNeu: sửa commit trong `build.context` của `docker-compose.coolify.vieneu.yml`, push, rồi Deploy resource VieNeu.
+- Đổi `VIENEU_API_KEY`: sửa ở **cả hai** resource, Deploy VieNeu trước rồi đến ứng dụng.
 
 ---
 
@@ -644,3 +731,4 @@ docker exec -it <tên-container-tts> node scripts/clients.mjs list
 - [ ] Hỏi mật khẩu khi mở giao diện (cửa sổ ẩn danh)
 - [ ] Giọng Edge và VieNeu đọc thử được
 - [ ] Đã đổi mật khẩu tạm; đã tạo API key cho đối tác nếu cần
+- [ ] (Nếu đã tách theo mục 11.6) Resource VieNeu `(healthy)`, `VIENEU_API_KEY` giống nhau ở hai resource, biến môi trường ứng dụng chỉ ở Runtime

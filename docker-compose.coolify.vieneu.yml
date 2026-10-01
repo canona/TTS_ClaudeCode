@@ -1,0 +1,63 @@
+# Coolify resource #1 of 2 (Build Pack: Docker Compose) – VieNeu-TTS only.
+# Deploy once; it rarely changes. The app resource (docker-compose.coolify.app.yml)
+# reaches it at http://tts-vieneu:8000 over Coolify's shared `coolify` network,
+# so redeploying the app never rebuilds or restarts VieNeu.
+# No domain: VieNeu stays internal.
+
+services:
+  # One-shot: a fresh volume is owned by root, but VieNeu runs as `app` (1000:1000)
+  # and crashes with PermissionError on /home/app/.cache/huggingface/hub.
+  vieneu-init:
+    image: alpine:3.20
+    command: ["chown", "-R", "1000:1000", "/d"]
+    restart: "no"
+    volumes:
+      - vieneu-hf-cache:/d
+    # Coolify: an exited one-shot container must not mark the resource unhealthy
+    exclude_from_hc: true
+
+  vieneu:
+    # Upstream CPU image (ONNX, torch-free), pinned to the commit tested with this app.
+    build:
+      context: https://github.com/pnnbao97/VieNeu-TTS.git#2e982ff857bbe23fffa0c314e0f60da2497e2f4b
+      dockerfile: docker/Dockerfile.cpu
+    restart: unless-stopped
+    # The image defaults to the Gradio UI; run the OpenAI-compatible streaming API instead.
+    command: ["python", "-m", "apps.openai_speech"]
+    depends_on:
+      vieneu-init:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      VIENEU_BACKEND: onnx
+      # int8 is faster on CPUs with VNNI
+      VIENEU_PRECISION: ${VIENEU_PRECISION:-fp32}
+      # Empty = VieNeu's CPU default (fp32: 1, int8: 2)
+      VIENEU_MAX_STREAMS: ${VIENEU_MAX_STREAMS:-}
+      # Must equal VIENEU_API_KEY of the app resource
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+    volumes:
+      # Model weights downloaded from Hugging Face on first start
+      - vieneu-hf-cache:/home/app/.cache/huggingface
+    networks:
+      coolify:
+        # Stable name for the app resource (Coolify suffixes container names)
+        aliases:
+          - tts-vieneu
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 300s
+      retries: 3
+
+volumes:
+  vieneu-hf-cache:
+
+networks:
+  # Coolify's destination network, shared by every resource on this server
+  coolify:
+    external: true
