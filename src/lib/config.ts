@@ -23,7 +23,9 @@ export const serverConfig = {
   firstChunkBytes: intEnv('TTS_FIRST_CHUNK_BYTES', 200, 50, 4000),
   /** Websocket idle timeout: fail if Edge sends nothing for this long. */
   chunkTimeoutMs: intEnv('TTS_CHUNK_TIMEOUT_MS', 20_000, 5_000, 300_000),
-  maxRetries: intEnv('TTS_MAX_RETRIES', 3, 0, 10),
+  /** Edge websockets open at once across ALL requests (same IP): above ~4-5 Edge starts closing sockets (code 1006). */
+  globalConcurrency: intEnv('TTS_GLOBAL_CONCURRENCY', 4, 1, 32),
+  maxRetries: intEnv('TTS_MAX_RETRIES', 5, 0, 10),
   cacheMemoryBytes: intEnv('CACHE_MEMORY_MB', 128, 0, 8192) * MB,
   /** Empty string disables the disk cache. */
   cacheDir: process.env.CACHE_DIR ?? './.tts-cache',

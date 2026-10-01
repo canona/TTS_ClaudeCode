@@ -1,6 +1,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import WebSocket, { type RawData } from 'ws';
+import { serverConfig } from '../config';
 import type { ProsodySettings } from '../types';
 import { buildSsml, unescapeXml } from '../text/ssml';
 import { OUTPUT_FORMAT, SEC_MS_GEC_VERSION, WSS_URL, websocketHeaders } from './constants';
@@ -255,6 +256,51 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
+ * Process-wide FIFO gate for Edge websockets. The per-request concurrency alone
+ * does not bound load: N parallel requests would open N × concurrency sockets
+ * and Edge throttles by closing them. Stored on globalThis so every bundled
+ * copy of this module shares one gate.
+ */
+interface Gate {
+  active: number;
+  queue: Array<() => void>;
+}
+const gate: Gate = ((globalThis as { __edgeTtsGate?: Gate }).__edgeTtsGate ??= { active: 0, queue: [] });
+
+function acquireSlot(signal?: AbortSignal): Promise<() => void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      const next = gate.queue.shift();
+      if (next) next(); // hand the slot over directly: `active` stays unchanged
+      else gate.active--;
+    };
+    const grant = (): void => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(release);
+    };
+    const onAbort = (): void => {
+      const i = gate.queue.indexOf(grant);
+      if (i !== -1) gate.queue.splice(i, 1);
+      reject(abortError());
+    };
+    if (gate.active < serverConfig.globalConcurrency) {
+      gate.active++;
+      grant();
+    } else {
+      gate.queue.push(grant);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+/**
  * Synthesizes with exponential backoff. A 403 usually means our clock is off
  * (the Sec-MS-GEC token is time based), so we resync from the server's Date
  * header before retrying.
@@ -271,6 +317,7 @@ export async function synthesize(
 ): Promise<SynthesisResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const release = await acquireSlot(options.signal);
     try {
       return await synthesizeOnce(text, options);
     } catch (err) {
@@ -278,8 +325,12 @@ export async function synthesize(
       lastError = err;
       if (attempt >= maxRetries || !beforeRetry()) break;
       if (err instanceof EdgeTtsError && err.status === 403) adjustClockSkew(err.serverDate);
-      await sleep(400 * 2 ** attempt, options.signal);
+    } finally {
+      release();
     }
+    // Jitter de-synchronizes concurrent requests that failed together; cap keeps the wait sane.
+    const backoff = Math.min(400 * 2 ** attempt, 5000);
+    await sleep(backoff * (0.5 + Math.random()), options.signal);
   }
   throw lastError instanceof Error ? lastError : new EdgeTtsError('Edge TTS synthesis failed');
 }
